@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DATAISM</title>
+<style>
+  :root{
+    --bg:#060707; --ink:#000; --seam:#26211a; --fg:#e8e8e8; --dim:#7a7a7a; --faint:#3a3a3a;
+    --live:#39ff88; --warn:#ffcc00; --bad:#ff3b3b; --hl:#7cc4ff;
+    --glow:255,196,72;   /* warm yellow, candle-like */
+    --g:1;               /* glow intensity, driven by live data */
+    --u:160px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);overflow:hidden}
+  body{font-family:"JetBrains Mono","Consolas","D2Coding",monospace;color:var(--fg);cursor:grab;user-select:none;touch-action:none;
+    background:radial-gradient(ellipse at 50% 45%, #17130b 0%, #080706 55%, #020202 100%)}
+  body.grabbing{cursor:grabbing}
+  /* stage = 6u x 12u = 960 x 1920 (same proportion as 1920x960.png, vertical) */
+  #stage{position:absolute;left:0;top:0;width:calc(var(--u)*6);height:calc(var(--u)*12);transform-origin:0 0}
+  /* ---- bloom: blurred copies of the cross silhouette behind the panels ---- */
+  .bloom{position:absolute;inset:0;pointer-events:none}
+  .bloom i{position:absolute;background:rgb(var(--glow))}
+  .bloom i.v{left:calc(var(--u)*2);top:0;width:calc(var(--u)*2);height:100%}
+  .bloom i.hz{left:0;top:calc(var(--u)*3);width:100%;height:calc(var(--u)*2)}
+  .bloom.b1{filter:blur(14px);opacity:calc(.55*var(--g))}
+  .bloom.b2{filter:blur(60px);opacity:calc(.35*var(--g))}
+  .bloom.b3{filter:blur(180px);opacity:calc(.22*var(--g))}
+  .bloom.b3 i.v{transform:scaleX(1.4)} .bloom.b3 i.hz{transform:scaleY(1.6)}
+  .p{position:absolute;background:var(--ink);outline:1px solid var(--seam);overflow:hidden;padding:10px 10px 8px;display:flex;flex-direction:column;
+    box-shadow:inset 0 0 0 1px rgba(var(--glow),.08), inset 0 0 18px rgba(var(--glow),.06)}
+  .h{display:flex;justify-content:space-between;align-items:baseline;font-size:9px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;margin-bottom:6px;flex:none}
+  .h b{color:var(--fg);font-weight:600}
+  .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--faint);margin-left:4px;vertical-align:middle}
+  .dot.on{background:var(--live);box-shadow:0 0 6px var(--live)}
+  .dot.err{background:var(--bad)}
+  .big{font-size:34px;font-weight:700;line-height:1;color:#fff;font-variant-numeric:tabular-nums}
+  .unit{font-size:10px;color:var(--dim);margin-left:4px}
+  .sub{font-size:9px;color:var(--dim);margin-top:4px}
+  .list{font-size:10px;line-height:1.35;overflow:hidden;flex:1;min-height:0}
+  .list div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid #111;padding:2px 0}
+  .list .t{color:var(--dim);margin-right:4px}
+  .feed{font-size:10px;line-height:1.4;overflow:hidden;flex:1;min-height:0;display:flex;flex-direction:column}
+  .feed div{padding:3px 0;border-bottom:1px solid #111;word-break:break-word;animation:in .5s ease-out}
+  .feed .m{color:var(--hl)}
+  .feed .k{color:var(--live)}
+  @keyframes in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+  canvas.spark{width:100%;height:40px;display:block;margin-top:auto}
+  .row{display:flex;justify-content:space-between;font-size:10px;padding:3px 0;border-bottom:1px solid #111}
+  .row .s{font-size:9px}
+  .ok{color:var(--live)} .minor{color:var(--warn)} .major,.critical{color:var(--bad)}
+  .bar{display:flex;height:10px;margin-top:6px;gap:1px}
+  .bar span{display:block;height:100%}
+  .legend{font-size:8px;color:var(--dim);margin-top:4px;line-height:1.4}
+  .src{font-size:7.5px;color:var(--faint);margin-top:4px;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .split{display:flex;gap:12px;flex:1;min-height:0}
+  .split>div{flex:1;min-width:0;display:flex;flex-direction:column}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="bloom b3"><i class="v"></i><i class="hz"></i></div>
+  <div class="bloom b2"><i class="v"></i><i class="hz"></i></div>
+  <div class="bloom b1"><i class="v"></i><i class="hz"></i></div>
+
+  <!-- ===== HEAD (top of cross) ===== -->
+  <section class="p" style="left:calc(var(--u)*2);top:0;width:var(--u);height:calc(var(--u)*2)">
+    <div class="h"><b>STATUS</b><span id="st-dot" class="dot"></span></div>
+    <div id="st-list"></div>
+    <div class="sub" id="st-inc" style="margin-top:8px;line-height:1.4"></div>
+    <div class="src">statuspage summary.json · 60s</div>
+  </section>
+
+  <section class="p" style="left:calc(var(--u)*3);top:0;width:var(--u);height:calc(var(--u)*2)">
+    <div class="h"><b>AI COMMITS</b><span id="gh-dot" class="dot"></span></div>
+    <div class="sub">Co-Authored-By: Claude</div>
+    <div class="big" id="gh-claude" style="font-size:22px">—</div>
+    <div class="sub" id="gh-claude-d"></div>
+    <div class="sub" style="margin-top:10px">Co-Authored-By: Copilot</div>
+    <div class="big" id="gh-copilot" style="font-size:22px">—</div>
+    <div class="sub" id="gh-copilot-d"></div>
+    <div class="src" style="margin-top:auto">GitHub search/commits · 90s</div>
+  </section>
+
+  <!-- ===== UPPER SHAFT ===== -->
+  <section class="p" style="left:calc(var(--u)*2);top:calc(var(--u)*2);width:var(--u);height:calc(var(--u)*2)">
+    <div class="h"><b>HF · NEW</b><span id="hfn-dot" class="dot"></span></div>
+    <div class="list" id="hfn-list"></div>
+    <div class="src">huggingface.co/api/models · 30s</div>
+  </section>
+
+  <section class="p" style="left:calc(var(--u)*3);top:calc(var(--u)*2);width:var(--u);height:calc(var(--u)*2)">
+    <div class="h"><b>HF · TRENDING</b><span id="hft-dot" class="dot"></span></div>
+    <div class="list" id="hft-list"></div>
+    <div class="src">trendingScore · 5m</div>
+  </section>
+
+  <!-- ===== LEFT ARM ===== -->
+  <section class="p" style="left:0;top:calc(var(--u)*3);width:calc(var(--u)*2);height:var(--u)">
+    <div class="h"><b>BLUESKY · AI MENTIONS</b><span id="bs-dot" class="dot"></span></div>
+    <div><span class="big" id="bs-rate">—</span><span class="unit">AI posts / min</span></div>
+    <div class="sub" id="bs-sub">connecting…</div>
+    <canvas class="spark" id="bs-spark"></canvas>
+  </section>
+
+  <section class="p" style="left:0;top:calc(var(--u)*4);width:calc(var(--u)*2);height:var(--u)">
+    <div class="h"><b>WIKIPEDIA · EDITS</b><span id="wk-dot" class="dot"></span></div>
+    <div><span class="big" id="wk-rate">—</span><span class="unit">edits / sec (global)</span></div>
+    <div class="sub" id="wk-sub">connecting…</div>
+    <canvas class="spark" id="wk-spark"></canvas>
+  </section>
+
+  <!-- ===== RIGHT ARM ===== -->
+  <section class="p" style="left:calc(var(--u)*4);top:calc(var(--u)*3);width:calc(var(--u)*2);height:var(--u)">
+    <div class="h"><b>OPENROUTER · MODELS</b><span id="or-dot" class="dot"></span></div>
+    <div class="split">
+      <div><span class="big" id="or-count">—</span><span class="sub">models live</span></div>
+      <div class="list" id="or-list"></div>
+    </div>
+    <div class="src">openrouter.ai/api/v1/models · 10m</div>
+  </section>
+
+  <section class="p" style="left:calc(var(--u)*4);top:calc(var(--u)*4);width:calc(var(--u)*2);height:var(--u)">
+    <div class="h"><b>GRID · CARBON (UK)</b><span id="gr-dot" class="dot"></span></div>
+    <div><span class="big" id="gr-val">—</span><span class="unit">gCO₂/kWh</span> <span class="sub" id="gr-idx"></span></div>
+    <div class="bar" id="gr-bar"></div>
+    <div class="legend" id="gr-leg"></div>
+    <div class="src" style="margin-top:auto">api.carbonintensity.org.uk · 5m</div>
+  </section>
+
+  <!-- ===== CROSSING / LOWER SHAFT ===== -->
+  <section class="p" style="left:calc(var(--u)*2);top:calc(var(--u)*4);width:var(--u);height:calc(var(--u)*2)">
+    <div class="h"><b>HACKER NEWS</b><span id="hn-dot" class="dot"></span></div>
+    <div class="list" id="hn-list" style="white-space:normal"></div>
+    <div class="src">hn.algolia.com · 60s</div>
+  </section>
+
+  <section class="p" style="left:calc(var(--u)*3);top:calc(var(--u)*4);width:var(--u);height:calc(var(--u)*2)">
+    <div class="h"><b>LATEST AI COMMITS</b></div>
+    <div class="list" id="gh-list"></div>
+    <div class="src">GitHub · co-authored-by: claude</div>
+  </section>
+
+  <!-- ===== FOOT (long shaft) ===== -->
+  <section class="p" style="left:calc(var(--u)*2);top:calc(var(--u)*6);width:var(--u);height:calc(var(--u)*6)">
+    <div class="h"><b>BLUESKY · LIVE</b><span class="dot" id="bs-dot2"></span></div>
+    <div class="feed" id="bs-feed"></div>
+    <div class="src">jetstream firehose · realtime</div>
+  </section>
+
+  <section class="p" style="left:calc(var(--u)*3);top:calc(var(--u)*6);width:var(--u);height:calc(var(--u)*6)">
+    <div class="h"><b>WIKIPEDIA · LIVE</b><span class="dot" id="wk-dot2"></span></div>
+    <div class="feed" id="wk-feed"></div>
+    <div class="src">stream.wikimedia.org · realtime</div>
+  </section>
+</div>
+
+
+<script>
+/* ---------- zoom & pan ----------
+   wheel / pinch = zoom at cursor · drag = pan · double-click panel = focus it
+   keys: + / - zoom · F (or 0 / Esc) = fit whole cross · arrows = pan */
+const stage = document.getElementById('stage');
+const view = { s:1, x:0, y:0 };          // screen = stage * s + (x, y)
+const FIT_PAD = 0.06;   // breathing room around the cross when fitted (6% each side)
+const fitScale = () => Math.min(innerWidth/960, innerHeight/1920) * (1 - FIT_PAD*2);
+const MIN = () => fitScale()*0.8, MAX = 8;
+function apply(anim){
+  stage.style.transition = anim ? 'transform .45s cubic-bezier(.2,.7,.2,1)' : 'none';
+  stage.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.s})`;
+}
+function fit(anim){ const s=fitScale(); view.s=s; view.x=(innerWidth-960*s)/2; view.y=(innerHeight-1920*s)/2; apply(anim); }
+function zoomAt(f, cx, cy, anim){
+  const s=Math.min(MAX, Math.max(MIN(), view.s*f)); const k=s/view.s;
+  view.x = cx-(cx-view.x)*k; view.y = cy-(cy-view.y)*k; view.s=s; apply(anim);
+}
+function focusEl(el){
+  const r={x:el.offsetLeft,y:el.offsetTop,w:el.offsetWidth,h:el.offsetHeight};
+  const s=Math.min(MAX, innerWidth*0.9/r.w, innerHeight*0.9/r.h);
+  view.s=s; view.x=innerWidth/2-(r.x+r.w/2)*s; view.y=innerHeight/2-(r.y+r.h/2)*s; apply(true);
+}
+addEventListener('wheel', e=>{ e.preventDefault(); zoomAt(Math.exp(-e.deltaY*(e.ctrlKey?0.01:0.0015)), e.clientX, e.clientY); }, {passive:false});
+let drag=null;
+addEventListener('pointerdown', e=>{ drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y}; document.body.classList.add('grabbing'); });
+addEventListener('pointermove', e=>{ if(!drag) return; view.x=drag.vx+e.clientX-drag.x; view.y=drag.vy+e.clientY-drag.y; apply(); });
+addEventListener('pointerup', ()=>{ drag=null; document.body.classList.remove('grabbing'); });
+addEventListener('dblclick', e=>{ const p=e.target.closest('.p'); p ? focusEl(p) : fit(true); });
+addEventListener('keydown', e=>{
+  const c=[innerWidth/2, innerHeight/2];
+  if(e.key==='+'||e.key==='=') zoomAt(1.4,...c,true);
+  else if(e.key==='-') zoomAt(1/1.4,...c,true);
+  else if(e.key==='f'||e.key==='F'||e.key==='0'||e.key==='Escape') fit(true);
+  else if(e.key.startsWith('Arrow')){ const d=120; if(e.key==='ArrowLeft')view.x+=d; if(e.key==='ArrowRight')view.x-=d; if(e.key==='ArrowUp')view.y+=d; if(e.key==='ArrowDown')view.y-=d; apply(true); }
+});
+addEventListener('resize', ()=>fit());
+const $ = id => document.getElementById(id);
+fit();
+
+/* ---------- bloom: slow breathing + flare on every live AI mention ---------- */
+let flare=0;
+(function glow(t){
+  flare*=0.94;
+  const g=0.9+0.12*Math.sin(t/2600)+Math.min(flare,0.6);
+  stage.style.setProperty('--g', g.toFixed(3));
+  requestAnimationFrame(glow);
+})(0);
+
+/* ---------- helpers ---------- */
+const esc = s => String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = n => n.toLocaleString('en-US');
+const ago = t => { const s=(Date.now()-new Date(t))/1000; if(s<60)return Math.max(0,s|0)+'s'; if(s<3600)return (s/60|0)+'m'; if(s<86400)return (s/3600|0)+'h'; return (s/86400|0)+'d'; };
+function dot(id, ok){ const d=$(id); if(d) d.className='dot '+(ok?'on':'err'); }
+async function getJSON(url){ const r=await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error(r.status); return r.json(); }
+function every(ms, fn){ const run=()=>fn().catch(e=>console.warn(fn.name,e)); run(); setInterval(run, ms); }
+const AI_RE = /\b(AI|A\.I\.|LLMs?|GPT[-\d\w]*|ChatGPT|OpenAI|Claude|Anthropic|Gemini|DeepSeek|Copilot|Grok|Llama|Mistral|Qwen|Nvidia|AGI|machine learning|neural|chatbot|인공지능|생성형|딥러닝|챗GPT|클로드)\b/i;
+function hl(text){ return esc(text).replace(new RegExp(AI_RE.source,'gi'), m=>`<span class="k">${m}</span>`); }
+
+function spark(canvas, data, color='#39ff88'){
+  const dpr=Math.min(8, Math.max(2, view.s*(devicePixelRatio||1))), w=canvas.clientWidth, h=canvas.clientHeight;
+  canvas.width=w*dpr; canvas.height=h*dpr;
+  const c=canvas.getContext('2d'); c.scale(dpr,dpr); c.clearRect(0,0,w,h);
+  if(data.length<2) return;
+  const max=Math.max(...data,1);
+  c.strokeStyle=color; c.lineWidth=1.2; c.beginPath();
+  data.forEach((v,i)=>{ const x=i/(data.length-1)*w, y=h-2-(v/max)*(h-4); i?c.lineTo(x,y):c.moveTo(x,y); });
+  c.stroke();
+  c.lineTo(w,h); c.lineTo(0,h); c.closePath(); c.fillStyle=color+'22'; c.fill();
+}
+function pushFeed(el, html, max=80){
+  const d=document.createElement('div'); d.innerHTML=html; el.prepend(d);
+  while(el.children.length>max) el.lastChild.remove();
+}
+
+/* ---------- 1. STATUS (statuspage v2) ---------- */
+const STATUS = [
+  ['OpenAI','https://status.openai.com/api/v2/summary.json'],
+  ['Claude','https://status.claude.com/api/v2/summary.json'],
+  ['GitHub','https://www.githubstatus.com/api/v2/summary.json'],
+  ['Cursor','https://status.cursor.com/api/v2/summary.json'],
+  ['Cloudflare','https://www.cloudflarestatus.com/api/v2/summary.json'],
+];
+every(60000, async function status(){
+  const res = await Promise.allSettled(STATUS.map(([,u])=>getJSON(u)));
+  let rows='', inc=[];
+  res.forEach((r,i)=>{
+    const name=STATUS[i][0];
+    if(r.status!=='fulfilled'){ rows+=`<div class="row"><span>${name}</span><span class="s major">N/A</span></div>`; return; }
+    const ind=r.value.status.indicator, cls=ind==='none'?'ok':ind;
+    const down=r.value.components.filter(c=>c.status!=='operational').length;
+    rows+=`<div class="row"><span>${name}</span><span class="s ${cls}">${ind==='none'?'● OK':'● '+ind.toUpperCase()}${down?` ·${down}`:''}</span></div>`;
+    (r.value.incidents||[]).forEach(x=>inc.push(`<span class="${x.impact}">▲</span> ${esc(name)}: ${esc(x.name)}`));
+  });
+  $('st-list').innerHTML=rows;
+  $('st-inc').innerHTML=inc.slice(0,5).join('<br>') || '<span class="ok">no open incidents</span>';
+  dot('st-dot', true);
+});
+
+/* ---------- 2. GitHub AI co-authored commits ---------- */
+const ghPrev={};
+async function ghCount(q, key){
+  const j=await getJSON(`https://api.github.com/search/commits?q=${encodeURIComponent(q)}&sort=committer-date&order=desc&per_page=12`);
+  const prev=ghPrev[key]; ghPrev[key]=j.total_count;
+  $('gh-'+key).textContent=fmt(j.total_count);
+  if(prev!=null) $('gh-'+key+'-d').innerHTML = `<span class="ok">+${fmt(Math.max(0,j.total_count-prev))}</span> since last poll`;
+  else $('gh-'+key+'-d').textContent='approx. total (search index)';
+  return j;
+}
+every(90000, async function github(){
+  const j=await ghCount('"co-authored-by: claude"','claude');
+  $('gh-list').innerHTML=j.items.map(it=>{
+    const msg=it.commit.message.split('\n')[0];
+    return `<div title="${esc(it.repository.full_name)}"><span class="t">${ago(it.commit.committer.date)}</span>${esc(msg)}<br><span class="t">${esc(it.repository.full_name)}</span></div>`;
+  }).join('');
+  await new Promise(r=>setTimeout(r,4000));
+  await ghCount('"co-authored-by: copilot"','copilot');
+  dot('gh-dot', true);
+});
+
+/* ---------- 3. Hugging Face ---------- */
+every(30000, async function hfNew(){
+  const j=await getJSON('https://huggingface.co/api/models?sort=createdAt&direction=-1&limit=20');
+  $('hfn-list').innerHTML=j.map(m=>`<div><span class="t">${ago(m.createdAt)}</span>${esc(m.id.split('/').pop())}<br><span class="t">${esc(m.id.split('/')[0])}${m.pipeline_tag?' · '+esc(m.pipeline_tag):''}</span></div>`).join('');
+  dot('hfn-dot', true);
+});
+every(300000, async function hfTrend(){
+  const j=await getJSON('https://huggingface.co/api/models?sort=trendingScore&direction=-1&limit=14');
+  $('hft-list').innerHTML=j.map((m,i)=>`<div><span class="t">${String(i+1).padStart(2,'0')}</span>${esc(m.id.split('/').pop())}<br><span class="t">♥ ${fmt(m.likes||0)} · ↓ ${fmt(m.downloads||0)}</span></div>`).join('');
+  dot('hft-dot', true);
+});
+
+/* ---------- 4. Hacker News ---------- */
+every(60000, async function hn(){
+  const j=await getJSON('https://hn.algolia.com/api/v1/search_by_date?query=AI&tags=story&hitsPerPage=14');
+  $('hn-list').innerHTML=j.hits.map(h=>`<div style="white-space:normal"><span class="t">${ago(h.created_at)} ▲${h.points??0}</span>${hl(h.title)}</div>`).join('');
+  dot('hn-dot', true);
+});
+
+/* ---------- 5. OpenRouter ---------- */
+every(600000, async function openrouter(){
+  const j=await getJSON('https://openrouter.ai/api/v1/models');
+  const ms=j.data.slice().sort((a,b)=>(b.created||0)-(a.created||0));
+  $('or-count').textContent=fmt(ms.length);
+  $('or-list').innerHTML='<div class="t" style="border:0">newest ↓</div>'+ms.slice(0,6).map(m=>`<div><span class="t">${ago(m.created*1000)}</span>${esc(m.name||m.id)}</div>`).join('');
+  dot('or-dot', true);
+});
+
+/* ---------- 6. UK grid carbon ---------- */
+const FUEL_C={gas:'#ff7a45',coal:'#8c5a3c',nuclear:'#b07cff',wind:'#39ff88',solar:'#ffd84a',hydro:'#4ab8ff',biomass:'#9acd32',imports:'#888',other:'#555'};
+every(300000, async function grid(){
+  const [i,g]=await Promise.all([getJSON('https://api.carbonintensity.org.uk/intensity'),getJSON('https://api.carbonintensity.org.uk/generation')]);
+  const d=i.data[0].intensity;
+  $('gr-val').textContent=d.actual??d.forecast;
+  $('gr-idx').textContent=d.index?.toUpperCase()||'';
+  const mix=g.data.generationmix.filter(f=>f.perc>0).sort((a,b)=>b.perc-a.perc);
+  $('gr-bar').innerHTML=mix.map(f=>`<span style="width:${f.perc}%;background:${FUEL_C[f.fuel]||'#666'}"></span>`).join('');
+  $('gr-leg').innerHTML=mix.map(f=>`<span style="color:${FUEL_C[f.fuel]||'#666'}">■</span> ${f.fuel} ${f.perc.toFixed(0)}%`).join('&nbsp; ');
+  dot('gr-dot', true);
+});
+
+/* ---------- 7. Bluesky Jetstream (realtime) ---------- */
+(function bluesky(){
+  let total=0, ai=0, perMin=[], secAI=[], secTotal=[];
+  let lastFeed=0;
+  function connect(){
+    const ws=new WebSocket('wss://jetstream2.us-east.bsky.network/subscribe?wantedCollections=app.bsky.feed.post');
+    ws.onopen=()=>{ dot('bs-dot',true); dot('bs-dot2',true); };
+    ws.onclose=()=>{ dot('bs-dot',false); dot('bs-dot2',false); setTimeout(connect,3000); };
+    ws.onmessage=e=>{
+      const m=JSON.parse(e.data);
+      if(m.kind!=='commit'||m.commit?.operation!=='create') return;
+      const t=m.commit.record?.text; if(!t) return;
+      total++;
+      if(AI_RE.test(t)){
+        ai++; flare+=0.12;
+        const now=performance.now();
+        if(now-lastFeed>350){ lastFeed=now; pushFeed($('bs-feed'), hl(t.slice(0,220)), 60); }
+      }
+    };
+  }
+  connect();
+  setInterval(()=>{
+    secAI.push(ai); secTotal.push(total); ai=0; total=0;
+    if(secAI.length>60){ secAI.shift(); secTotal.shift(); }
+    const a=secAI.reduce((x,y)=>x+y,0), t=secTotal.reduce((x,y)=>x+y,0);
+    const rate=Math.round(a*60/secAI.length);
+    $('bs-rate').textContent=fmt(rate);
+    $('bs-sub').textContent=`${fmt(Math.round(t*60/secTotal.length))} posts/min total · ${(t?a/t*100:0).toFixed(2)}% mention AI`;
+    perMin.push(a/secAI.length*60); if(perMin.length>120) perMin.shift();
+    spark($('bs-spark'), perMin);
+  },1000);
+})();
+
+/* ---------- 8. Wikipedia EventStreams (realtime) ---------- */
+(function wiki(){
+  let n=0, series=[], lastFeed=0, aiHits=0;
+  function connect(){
+    const es=new EventSource('https://stream.wikimedia.org/v2/stream/recentchange');
+    es.onopen=()=>{ dot('wk-dot',true); dot('wk-dot2',true); };
+    es.onerror=()=>{ dot('wk-dot',false); dot('wk-dot2',false); };
+    es.onmessage=e=>{
+      const d=JSON.parse(e.data);
+      if(d.type!=='edit'||d.bot) return;
+      n++;
+      const isAI=AI_RE.test(d.title);
+      if(isAI) aiHits++;
+      const now=performance.now();
+      if(isAI || now-lastFeed>900){
+        lastFeed=now;
+        const delta=(d.length?.new??0)-(d.length?.old??0);
+        pushFeed($('wk-feed'), `<span class="m">${esc(d.wiki.replace('wiki',''))}</span> ${isAI?hl(d.title):esc(d.title)} <span class="t" style="color:${delta>=0?'#39ff88':'#ff3b3b'}">${delta>=0?'+':''}${delta}</span>`, 70);
+      }
+    };
+  }
+  connect();
+  setInterval(()=>{
+    series.push(n); if(series.length>120) series.shift();
+    $('wk-rate').textContent=n;
+    $('wk-sub').textContent=`human edits · AI-related titles since open: ${aiHits}`;
+    spark($('wk-spark'), series, '#7cc4ff');
+    n=0;
+  },1000);
+})();
+</script>
+</body>
+</html>
